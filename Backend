@@ -1,0 +1,161 @@
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const multer = require('multer'); // For handling receipt image uploads
+const path = require('path');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// --- Middleware ---
+app.use(cors());
+app.use(express.json({ limit: '50mb' })); // Increased limit for base64 images
+app.use('/uploads', express.static('uploads')); // Serve uploaded images
+
+// --- Database Connection ---
+// Replace 'process.env.MONGO_URI' with your actual MongoDB connection string
+// mongoose.connect(process.env.MONGO_URI)
+//   .then(() => console.log('MongoDB Connected'))
+//   .catch(err => console.log(err));
+
+// --- Mongoose Models ---
+
+// 1. Transaction Model
+const TransactionSchema = new mongoose.Schema({
+  text: { type: String, required: true },
+  amount: { type: Number, required: true },
+  type: { type: String, enum: ['income', 'expense'], required: true },
+  category: { type: String, required: true },
+  date: { type: String, required: true }, // Format: YYYY-MM-DD
+  method: { type: String, enum: ['Cash', 'UPI', 'Card'], default: 'UPI' },
+  notes: { type: String },
+  receipt: { type: String }, // Store the image string (base64) or URL
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Transaction = mongoose.model('Transaction', TransactionSchema);
+
+// 2. Goal Model
+const GoalSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  target: { type: Number, required: true },
+  saved: { type: Number, default: 0 },
+  color: { type: String, default: 'bg-indigo-500' }
+});
+
+const Goal = mongoose.model('Goal', GoalSchema);
+
+// --- API Routes ---
+
+// GET: Fetch all transactions
+app.get('/api/transactions', async (req, res) => {
+  try {
+    const transactions = await Transaction.find().sort({ date: -1, createdAt: -1 });
+    res.json({
+        count: transactions.length,
+        data: transactions
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server Error' });
+  }
+});
+
+// POST: Add a new transaction
+app.post('/api/transactions', async (req, res) => {
+  try {
+    const { text, amount, type, category, date, method, notes, receipt } = req.body;
+
+    const transaction = await Transaction.create({
+      text,
+      amount,
+      type,
+      category,
+      date,
+      method,
+      notes,
+      receipt
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: transaction
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      const messages = Object.values(err.errors).map(val => val.message);
+      return res.status(400).json({ error: messages });
+    } else {
+      return res.status(500).json({ error: 'Server Error' });
+    }
+  }
+});
+
+// DELETE: Remove a transaction
+app.delete('/api/transactions/:id', async (req, res) => {
+  try {
+    const transaction = await Transaction.findById(req.params.id);
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'No transaction found' });
+    }
+
+    await transaction.deleteOne();
+
+    return res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Server Error' });
+  }
+});
+
+// GET: Fetch all goals
+app.get('/api/goals', async (req, res) => {
+  try {
+    const goals = await Goal.find();
+    res.json(goals);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch goals' });
+  }
+});
+
+// POST: Add a new goal
+app.post('/api/goals', async (req, res) => {
+  try {
+    const { name, target, color } = req.body;
+    const goal = await Goal.create({ name, target, color });
+    res.status(201).json(goal);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to create goal' });
+  }
+});
+
+// PUT: Update goal amount (e.g. adding savings)
+app.put('/api/goals/:id', async (req, res) => {
+    try {
+        const { saved } = req.body;
+        const goal = await Goal.findByIdAndUpdate(
+            req.params.id, 
+            { saved },
+            { new: true }
+        );
+        res.json(goal);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update goal' });
+    }
+});
+
+// DELETE: Remove a goal
+app.delete('/api/goals/:id', async (req, res) => {
+    try {
+        await Goal.findByIdAndDelete(req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to delete goal' });
+    }
+});
+
+// --- Start Server ---
+app.listen(PORT, () => console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`));
